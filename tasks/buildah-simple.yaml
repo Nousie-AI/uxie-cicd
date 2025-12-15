@@ -18,10 +18,10 @@ spec:
       description: Build context directory
       type: string
       default: "."
-    - name: BUILD_ARGS
-      description: Build arguments
-      type: array
-      default: []
+    - name: BUILD_EXTRA_ARGS
+      description: Extra build arguments (space-separated)
+      type: string
+      default: ""
     - name: STORAGE_DRIVER
       description: Buildah storage driver
       type: string
@@ -77,10 +77,6 @@ spec:
 
         # Build image
         echo "Building image: $(params.IMAGE)"
-        BUILD_ARGS=""
-        for arg in $(params.BUILD_ARGS[*]); do
-          BUILD_ARGS="$BUILD_ARGS --build-arg $arg"
-        done
 
         buildah bud \
           --storage-driver=$(params.STORAGE_DRIVER) \
@@ -88,7 +84,7 @@ spec:
           --tls-verify=false \
           -f $(params.DOCKERFILE) \
           -t $(params.IMAGE) \
-          $BUILD_ARGS \
+          $(params.BUILD_EXTRA_ARGS) \
           $(params.CONTEXT)
 
         # Push image

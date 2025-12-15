@@ -37,7 +37,6 @@ spec:
     # Step 1: Clone manifest repository
     - name: git-clone-manifest
       taskRef:
-        kind: ClusterTask
         name: git-clone
       params:
         - name: url

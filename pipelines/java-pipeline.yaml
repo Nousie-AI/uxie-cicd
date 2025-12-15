@@ -57,7 +57,6 @@ spec:
     # Step 1: Clone source
     - name: git-clone
       taskRef:
-        kind: ClusterTask
         name: git-clone
       params:
         - name: url
