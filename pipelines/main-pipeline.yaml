@@ -99,50 +99,47 @@ spec:
           - name: data
         steps:
           - name: parse-config
-            image: image-registry.openshift-image-registry.svc:5000/openshift/pyyaml:latest
+            image: registry.access.redhat.com/ubi8/ubi-minimal:latest
             workingDir: $(workspaces.data.path)
             script: |
-              #!/usr/bin/env python3
-              import yaml
-              import os
+              #!/bin/bash
+              set -e
 
-              config_path = "$(params.appConfigPath)"
-              revision = "$(params.gitRevision)"
+              CONFIG_PATH="$(params.appConfigPath)"
 
-              # Read ocp-config.yaml
-              try:
-                  with open(config_path, 'r') as f:
-                      config = yaml.safe_load(f)
-              except FileNotFoundError:
-                  print(f"ERROR: {config_path} not found")
-                  # Default to java-pipeline if no config
-                  config = {
-                      'pipelineRef': 'java-pipeline',
-                      'projectName': 'uxie',
-                      'manifestGitUrl': '',
-                      'imageName': 'unknown'
-                  }
+              # Function to extract value from simple YAML
+              get_yaml_value() {
+                grep "^$1:" "$CONFIG_PATH" 2>/dev/null | cut -d':' -f2- | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//' | tr -d '"' || echo ""
+              }
 
-              # Get pipeline reference
-              pipeline_ref = config.get('pipelineRef', 'java-pipeline')
+              if [ ! -f "$CONFIG_PATH" ]; then
+                echo "WARNING: $CONFIG_PATH not found, using defaults"
+                PIPELINE_REF="java-pipeline"
+                PROJECT_NAME="uxie"
+                MANIFEST_GIT_URL=""
+                IMAGE_NAME="unknown"
+              else
+                PIPELINE_REF=$(get_yaml_value "pipelineRef")
+                PROJECT_NAME=$(get_yaml_value "projectName")
+                MANIFEST_GIT_URL=$(get_yaml_value "manifestGitUrl")
+                IMAGE_NAME=$(get_yaml_value "imageName")
+
+                # Set defaults if empty
+                [ -z "$PIPELINE_REF" ] && PIPELINE_REF="java-pipeline"
+                [ -z "$PROJECT_NAME" ] && PROJECT_NAME="uxie"
+                [ -z "$IMAGE_NAME" ] && IMAGE_NAME="unknown"
+              fi
 
               # Write results
-              with open("$(results.pipelineRef.path)", 'w') as f:
-                  f.write(pipeline_ref)
+              echo -n "$PIPELINE_REF" > $(results.pipelineRef.path)
+              echo -n "$PROJECT_NAME" > $(results.projectName.path)
+              echo -n "$MANIFEST_GIT_URL" > $(results.manifestGitUrl.path)
+              echo -n "$IMAGE_NAME" > $(results.imageName.path)
 
-              with open("$(results.projectName.path)", 'w') as f:
-                  f.write(config.get('projectName', 'uxie'))
-
-              with open("$(results.manifestGitUrl.path)", 'w') as f:
-                  f.write(config.get('manifestGitUrl', ''))
-
-              with open("$(results.imageName.path)", 'w') as f:
-                  f.write(config.get('imageName', config.get('applicationName', 'unknown')))
-
-              print(f"Pipeline: {pipeline_ref}")
-              print(f"Project: {config.get('projectName', 'uxie')}")
-              print(f"Manifest: {config.get('manifestGitUrl', 'N/A')}")
-              print(f"Image: {config.get('imageName', 'unknown')}")
+              echo "Pipeline: $PIPELINE_REF"
+              echo "Project: $PROJECT_NAME"
+              echo "Manifest: $MANIFEST_GIT_URL"
+              echo "Image: $IMAGE_NAME"
       params:
         - name: appConfigPath
           value: $(params.sourceContextDir)/ocp-config.yaml
