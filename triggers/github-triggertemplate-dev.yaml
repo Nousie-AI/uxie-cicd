@@ -27,7 +27,7 @@ spec:
           app.kubernetes.io/environment: dev
       spec:
         pipelineRef:
-          name: main-pipeline
+          name: java-pipeline
         params:
           - name: applicationName
             value: $(tt.params.git-repo-name)
@@ -37,6 +37,12 @@ spec:
             value: $(tt.params.git-revision)
           - name: environment
             value: dev
+          - name: manifestGitUrl
+            value: git@github.com:Nousie-AI/$(tt.params.git-repo-name)-manifests.git
+          - name: imageName
+            value: $(tt.params.git-repo-name)
+          - name: projectName
+            value: uxie
           - name: enabledLintSonar
             value: "true"
           - name: ignoreLinterFailures
@@ -59,3 +65,5 @@ spec:
           - name: ssh-creds
             secret:
               secretName: git-ssh-credentials
+          - name: maven-settings
+            emptyDir: {}
