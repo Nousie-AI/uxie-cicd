@@ -32,7 +32,7 @@ spec:
       optional: true
   steps:
     - name: update-manifest
-      image: registry.redhat.io/openshift-pipelines/pipelines-git-init-rhel8:latest
+      image: alpine/git:latest
       workingDir: $(workspaces.source.path)
       script: |
         #!/bin/bash
