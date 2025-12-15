@@ -105,8 +105,12 @@ spec:
         - name: maven-settings
           workspace: maven-settings
 
-    # Step 4: Maven test
+    # Step 4: Maven test (only in QA where test services are available)
     - name: maven-test
+      when:
+        - input: $(params.environment)
+          operator: in
+          values: ["qa"]
       runAfter:
         - maven-compile
       taskRef:
@@ -125,10 +129,10 @@ spec:
         - name: maven-settings
           workspace: maven-settings
 
-    # Step 5: Maven package
+    # Step 5: Maven package (runs after compile, tests are optional)
     - name: maven-package
       runAfter:
-        - maven-test
+        - maven-compile
       taskRef:
         name: maven-custom
       params:
