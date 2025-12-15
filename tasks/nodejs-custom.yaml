@@ -61,6 +61,9 @@ spec:
     - name: test
       image: $(params.NODE_IMAGE)
       workingDir: $(workspaces.source.path)/$(params.CONTEXT_DIR)
+      env:
+        - name: CI
+          value: "true"
       script: |
         #!/bin/sh
 

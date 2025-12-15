@@ -35,14 +35,17 @@ spec:
       image: alpine/git:latest
       workingDir: $(workspaces.source.path)
       script: |
-        #!/bin/bash
+        #!/bin/sh
         set -e
 
         # Configure SSH if credentials provided
         if [ -d "$(workspaces.ssh-directory.path)" ]; then
-          cp -R $(workspaces.ssh-directory.path)/* ~/.ssh/
-          chmod 700 ~/.ssh
-          chmod 600 ~/.ssh/*
+          mkdir -p /root/.ssh
+          cp $(workspaces.ssh-directory.path)/ssh-privatekey /root/.ssh/id_rsa
+          cp $(workspaces.ssh-directory.path)/known_hosts /root/.ssh/known_hosts
+          chmod 700 /root/.ssh
+          chmod 600 /root/.ssh/id_rsa
+          chmod 644 /root/.ssh/known_hosts
         fi
 
         # Clone manifest repo
@@ -100,7 +103,10 @@ spec:
         Image: $IMAGE_REF:$(params.imageTag)
         "
 
-        git push origin main
+        # Push to the current branch (default branch after clone)
+        CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        echo "Pushing to branch: $CURRENT_BRANCH"
+        git push origin $CURRENT_BRANCH
 
         echo "Manifest updated successfully"
         echo "ArgoCD will sync automatically for $(params.environment)"

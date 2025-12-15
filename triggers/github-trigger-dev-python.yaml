@@ -1,7 +1,7 @@
 apiVersion: triggers.tekton.dev/v1beta1
 kind: Trigger
 metadata:
-  name: github-trigger-dev
+  name: github-trigger-dev-python
   namespace: uxie-cicd
 spec:
   interceptors:
@@ -14,19 +14,18 @@ spec:
             secretName: github-webhook-secret
             secretKey: secret
         - name: eventTypes
-          value:
-            - push
+          value: ["push"]
     - ref:
         name: cel
         kind: ClusterInterceptor
       params:
         - name: filter
-          # Filter for develop branch AND Java repos (chat-api, admin-api, documents-api)
+          # Filter for develop branch AND Python repos (rag-api, enterprise-rag-api, intent-api)
           value: >-
             body.ref == "refs/heads/develop" &&
-            (body.repository.name == "uxie-chat-api" ||
-             body.repository.name == "uxie-admin-api" ||
-             body.repository.name == "uxie-documents-api")
+            (body.repository.name == "uxie-rag-api" ||
+             body.repository.name == "uxie-enterprise-rag-api" ||
+             body.repository.name == "uxie-intent-api")
         - name: overlays
           value:
             - key: git-url
@@ -42,4 +41,4 @@ spec:
   bindings:
     - ref: github-push-binding
   template:
-    ref: github-triggertemplate-dev
+    ref: github-triggertemplate-dev-python

@@ -6,9 +6,15 @@ metadata:
 spec:
   serviceAccountName: pipeline
   triggers:
-    # CI Triggers - Source code repositories
-    - triggerRef: github-trigger-dev    # develop branch → dev environment
-    - triggerRef: github-trigger-qa     # main branch → qa environment (with tag)
+    # CI Triggers - Source code repositories (Java)
+    - triggerRef: github-trigger-dev         # develop branch → dev environment (Java repos)
+    - triggerRef: github-trigger-qa          # main branch → qa environment (Java repos)
+
+    # CI Triggers - Source code repositories (Python)
+    - triggerRef: github-trigger-dev-python  # develop branch → dev environment (Python repos)
+
+    # CI Triggers - Source code repositories (React)
+    - triggerRef: github-trigger-dev-react   # develop branch → dev environment (React repos)
 
     # CD Triggers - Manifest repositories
     - triggerRef: github-trigger-cd-uat   # overlays/uat/ changes → uat promotion
