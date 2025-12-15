@@ -1,0 +1,76 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: maven-custom
+  namespace: uxie-cicd
+spec:
+  description: |
+    Run Maven goals with Nexus mirror integration.
+    Automatically generates settings.xml with Nexus credentials.
+  params:
+    - name: GOALS
+      description: Maven goals to execute
+      type: array
+      default:
+        - clean
+        - package
+    - name: MAVEN_IMAGE
+      description: Maven image to use
+      type: string
+      default: maven:3.8-openjdk-17
+    - name: NEXUS_MIRROR_URL
+      description: Nexus mirror URL
+      type: string
+      default: http://nxrm-ha-nexus-repo-service.nexus.svc.cluster.local:80/repository/maven-public/
+    - name: CONTEXT_DIR
+      description: Directory containing pom.xml
+      type: string
+      default: "."
+  workspaces:
+    - name: source
+      description: Workspace with source code
+    - name: maven-settings
+      description: Workspace for maven settings
+  steps:
+    - name: generate-settings
+      image: registry.access.redhat.com/ubi8/ubi-minimal:latest
+      script: |
+        #!/bin/bash
+        cat > $(workspaces.maven-settings.path)/settings.xml << 'EOF'
+        <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0
+                                      https://maven.apache.org/xsd/settings-1.0.0.xsd">
+          <servers>
+            <server>
+              <id>mirror.default</id>
+              <username>admin</username>
+              <password>nexusabc</password>
+            </server>
+          </servers>
+          <mirrors>
+            <mirror>
+              <id>mirror.default</id>
+              <url>$(params.NEXUS_MIRROR_URL)</url>
+              <mirrorOf>central</mirrorOf>
+            </mirror>
+          </mirrors>
+        </settings>
+        EOF
+        echo "Generated settings.xml with Nexus mirror"
+    - name: maven-run
+      image: $(params.MAVEN_IMAGE)
+      workingDir: $(workspaces.source.path)/$(params.CONTEXT_DIR)
+      args:
+        - $(params.GOALS[*])
+      script: |
+        #!/bin/bash
+        set -e
+
+        GOALS="$@"
+        echo "Running: mvn $GOALS"
+
+        mvn -s $(workspaces.maven-settings.path)/settings.xml \
+            -DskipTests=false \
+            -Dmaven.repo.local=$(workspaces.source.path)/.m2 \
+            $GOALS

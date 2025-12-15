@@ -1,0 +1,55 @@
+apiVersion: triggers.tekton.dev/v1beta1
+kind: EventListener
+metadata:
+  name: github-listener
+  namespace: uxie-cicd
+spec:
+  serviceAccountName: pipeline
+  triggers:
+    # CI Triggers - Source code repositories
+    - triggerRef: github-trigger-dev    # develop branch → dev environment
+    - triggerRef: github-trigger-qa     # main branch → qa environment (with tag)
+
+    # CD Triggers - Manifest repositories
+    - triggerRef: github-trigger-cd-uat   # overlays/uat/ changes → uat promotion
+    - triggerRef: github-trigger-cd-prod  # overlays/prod/ changes → prod promotion
+  resources:
+    kubernetesResource:
+      spec:
+        template:
+          spec:
+            serviceAccountName: pipeline
+            containers:
+              - resources:
+                  requests:
+                    memory: "64Mi"
+                    cpu: "50m"
+                  limits:
+                    memory: "128Mi"
+                    cpu: "100m"
+---
+# Route to expose EventListener externally
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: webhook-github
+  namespace: uxie-cicd
+spec:
+  to:
+    kind: Service
+    name: el-github-listener
+  port:
+    targetPort: http-listener
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+# Webhook secret for GitHub signature validation
+apiVersion: v1
+kind: Secret
+metadata:
+  name: github-webhook-secret
+  namespace: uxie-cicd
+type: Opaque
+stringData:
+  secret: "uxie-webhook-secret-2025"

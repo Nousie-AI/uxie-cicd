@@ -1,0 +1,41 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: uxie
+  namespace: openshift-gitops
+spec:
+  description: UXIE Platform Project
+  sourceRepos:
+    - 'git@github.com:Nousie-AI/uxie-*-manifests.git'
+    - 'https://github.com/Nousie-AI/uxie-*-manifests.git'
+  destinations:
+    - namespace: uxie-dev
+      server: https://kubernetes.default.svc
+    - namespace: uxie-qa
+      server: https://kubernetes.default.svc
+    - namespace: uxie-uat
+      server: https://kubernetes.default.svc
+    - namespace: uxie-prod
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+    - group: ''
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: ''
+      kind: ConfigMap
+    - group: ''
+      kind: Secret
+    - group: ''
+      kind: Service
+    - group: ''
+      kind: ServiceAccount
+    - group: apps
+      kind: Deployment
+    - group: apps
+      kind: StatefulSet
+    - group: route.openshift.io
+      kind: Route
+    - group: networking.k8s.io
+      kind: NetworkPolicy
+    - group: autoscaling
+      kind: HorizontalPodAutoscaler

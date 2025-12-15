@@ -1,0 +1,88 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: sonarqube-scanner-custom
+  namespace: uxie-cicd
+spec:
+  description: |
+    Run SonarQube analysis with quality gate check.
+  params:
+    - name: SONAR_HOST_URL
+      description: SonarQube server URL
+      type: string
+      default: http://sonarqube-sonarqube.sonarqube.svc.cluster.local:9000
+    - name: SONAR_PROJECT_KEY
+      description: SonarQube project key
+      type: string
+    - name: SOURCE_DIR
+      description: Directory containing source code
+      type: string
+      default: "."
+    - name: WAIT_FOR_QUALITY_GATE
+      description: Whether to wait for quality gate result
+      type: string
+      default: "false"
+  workspaces:
+    - name: source
+      description: Workspace with source code
+    - name: sonar-credentials
+      description: Workspace with SonarQube token
+      optional: true
+  results:
+    - name: QUALITY_GATE_STATUS
+      description: Quality gate status (OK/ERROR)
+  steps:
+    - name: sonar-scan
+      image: sonarsource/sonar-scanner-cli:5
+      workingDir: $(workspaces.source.path)/$(params.SOURCE_DIR)
+      env:
+        - name: SONAR_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: sonarqube-credentials
+              key: token
+              optional: true
+      script: |
+        #!/bin/bash
+        set -e
+
+        # Get token from secret or workspace
+        if [ -z "$SONAR_TOKEN" ] && [ -f "$(workspaces.sonar-credentials.path)/token" ]; then
+          SONAR_TOKEN=$(cat $(workspaces.sonar-credentials.path)/token)
+        fi
+
+        if [ -z "$SONAR_TOKEN" ]; then
+          echo "WARNING: No SonarQube token found, using anonymous access"
+        fi
+
+        echo "Running SonarQube analysis..."
+        echo "  Server: $(params.SONAR_HOST_URL)"
+        echo "  Project: $(params.SONAR_PROJECT_KEY)"
+
+        # Detect project type and set properties
+        EXTRA_PROPS=""
+        if [ -f "pom.xml" ]; then
+          echo "  Type: Java/Maven"
+          EXTRA_PROPS="-Dsonar.java.binaries=target/classes"
+        elif [ -f "package.json" ]; then
+          echo "  Type: Node.js"
+          EXTRA_PROPS="-Dsonar.sources=src"
+        elif [ -f "requirements.txt" ]; then
+          echo "  Type: Python"
+          EXTRA_PROPS="-Dsonar.python.version=3"
+        fi
+
+        sonar-scanner \
+          -Dsonar.host.url=$(params.SONAR_HOST_URL) \
+          -Dsonar.projectKey=$(params.SONAR_PROJECT_KEY) \
+          -Dsonar.login=$SONAR_TOKEN \
+          -Dsonar.qualitygate.wait=$(params.WAIT_FOR_QUALITY_GATE) \
+          $EXTRA_PROPS
+
+        # Check quality gate status
+        if [ "$(params.WAIT_FOR_QUALITY_GATE)" == "true" ]; then
+          echo "Quality gate check passed"
+          echo -n "OK" > $(results.QUALITY_GATE_STATUS.path)
+        else
+          echo -n "SKIPPED" > $(results.QUALITY_GATE_STATUS.path)
+        fi

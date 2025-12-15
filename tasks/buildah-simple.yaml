@@ -1,0 +1,106 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: buildah-simple
+  namespace: uxie-cicd
+spec:
+  description: |
+    Build container image using Buildah with automatic OpenShift registry auth.
+  params:
+    - name: IMAGE
+      description: Full image reference including registry and tag
+      type: string
+    - name: DOCKERFILE
+      description: Path to Dockerfile
+      type: string
+      default: ./Dockerfile
+    - name: CONTEXT
+      description: Build context directory
+      type: string
+      default: "."
+    - name: BUILD_ARGS
+      description: Build arguments
+      type: array
+      default: []
+    - name: STORAGE_DRIVER
+      description: Buildah storage driver
+      type: string
+      default: vfs
+  workspaces:
+    - name: source
+      description: Workspace with source code
+  results:
+    - name: IMAGE_DIGEST
+      description: Digest of the built image
+    - name: IMAGE_URL
+      description: URL of the built image
+  steps:
+    - name: build-and-push
+      image: registry.redhat.io/rhel8/buildah:latest
+      workingDir: $(workspaces.source.path)
+      securityContext:
+        capabilities:
+          add:
+            - SETFCAP
+      env:
+        - name: STORAGE_DRIVER
+          value: $(params.STORAGE_DRIVER)
+      script: |
+        #!/bin/bash
+        set -e
+
+        # Configure storage
+        mkdir -p /var/lib/containers
+        cat > /etc/containers/storage.conf << EOF
+        [storage]
+        driver = "$(params.STORAGE_DRIVER)"
+        runroot = "/var/run/containers/storage"
+        graphroot = "/var/lib/containers/storage"
+        [storage.options]
+        additionalimagestores = []
+        [storage.options.overlay]
+        mountopt = "nodev,metacopy=on"
+        EOF
+
+        # Configure namespace mapping
+        echo "root:1:4294967294" > /etc/subuid
+        echo "root:1:4294967294" > /etc/subgid
+
+        # Login to OpenShift internal registry using ServiceAccount token
+        REGISTRY=$(echo "$(params.IMAGE)" | cut -d'/' -f1)
+        echo "Logging in to registry: $REGISTRY"
+
+        buildah login \
+          --username=serviceaccount \
+          --password-stdin \
+          "$REGISTRY" < /var/run/secrets/kubernetes.io/serviceaccount/token
+
+        # Build image
+        echo "Building image: $(params.IMAGE)"
+        BUILD_ARGS=""
+        for arg in $(params.BUILD_ARGS[*]); do
+          BUILD_ARGS="$BUILD_ARGS --build-arg $arg"
+        done
+
+        buildah bud \
+          --storage-driver=$(params.STORAGE_DRIVER) \
+          --format=oci \
+          --tls-verify=false \
+          -f $(params.DOCKERFILE) \
+          -t $(params.IMAGE) \
+          $BUILD_ARGS \
+          $(params.CONTEXT)
+
+        # Push image
+        echo "Pushing image: $(params.IMAGE)"
+        buildah push \
+          --storage-driver=$(params.STORAGE_DRIVER) \
+          --tls-verify=false \
+          --digestfile=/tmp/image-digest \
+          $(params.IMAGE)
+
+        # Output results
+        cat /tmp/image-digest | tee $(results.IMAGE_DIGEST.path)
+        echo -n "$(params.IMAGE)" > $(results.IMAGE_URL.path)
+
+        echo "Image built and pushed successfully"

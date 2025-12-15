@@ -1,0 +1,258 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: main-pipeline
+  namespace: uxie-cicd
+spec:
+  description: |
+    Orchestrator pipeline that reads ocp-config.yaml from source repo
+    and routes to the appropriate tech-specific pipeline (java/python/react).
+  params:
+    - name: applicationName
+      description: Application name
+      type: string
+    - name: gitRepoUrl
+      description: Git repository URL (SSH)
+      type: string
+    - name: gitRevision
+      description: Git revision (refs/heads/develop or refs/heads/main)
+      type: string
+    - name: environment
+      description: Target environment (dev/qa)
+      type: string
+    - name: enabledLintSonar
+      description: Enable linting and SonarQube scan
+      type: string
+      default: "true"
+    - name: ignoreLinterFailures
+      description: Ignore linter failures
+      type: string
+      default: "true"
+    - name: ignoreTestFailures
+      description: Ignore test failures
+      type: string
+      default: "true"
+    - name: ignoreScanFailures
+      description: Ignore SonarQube scan failures
+      type: string
+      default: "true"
+    - name: ignoreQualityGate
+      description: Ignore quality gate failures
+      type: string
+      default: "true"
+    - name: sourceContextDir
+      description: Source code context directory
+      type: string
+      default: source
+    - name: nexusURL
+      description: Nexus mirror URL
+      type: string
+      default: http://nxrm-ha-nexus-repo-service.nexus.svc.cluster.local:80/repository/maven-public/
+    - name: sonarUrl
+      description: SonarQube URL
+      type: string
+      default: http://sonarqube-sonarqube.sonarqube.svc.cluster.local:9000
+  workspaces:
+    - name: data
+    - name: ssh-creds
+      optional: true
+  tasks:
+    # Step 1: Clone source repository
+    - name: git-clone
+      taskRef:
+        kind: ClusterTask
+        name: git-clone
+      params:
+        - name: url
+          value: $(params.gitRepoUrl)
+        - name: revision
+          value: $(params.gitRevision)
+        - name: subdirectory
+          value: $(params.sourceContextDir)
+        - name: deleteExisting
+          value: "true"
+      workspaces:
+        - name: output
+          workspace: data
+        - name: ssh-directory
+          workspace: ssh-creds
+
+    # Step 2: Read ocp-config.yaml and determine pipeline
+    - name: get-pipeline-ref
+      runAfter:
+        - git-clone
+      taskSpec:
+        params:
+          - name: appConfigPath
+            type: string
+          - name: gitRevision
+            type: string
+        results:
+          - name: pipelineRef
+            description: Pipeline to execute
+          - name: projectName
+            description: Project name from config
+          - name: manifestGitUrl
+            description: Manifest repository URL
+          - name: imageName
+            description: Image name
+        workspaces:
+          - name: data
+        steps:
+          - name: parse-config
+            image: image-registry.openshift-image-registry.svc:5000/openshift/pyyaml:latest
+            workingDir: $(workspaces.data.path)
+            script: |
+              #!/usr/bin/env python3
+              import yaml
+              import os
+
+              config_path = "$(params.appConfigPath)"
+              revision = "$(params.gitRevision)"
+
+              # Read ocp-config.yaml
+              try:
+                  with open(config_path, 'r') as f:
+                      config = yaml.safe_load(f)
+              except FileNotFoundError:
+                  print(f"ERROR: {config_path} not found")
+                  # Default to java-pipeline if no config
+                  config = {
+                      'pipelineRef': 'java-pipeline',
+                      'projectName': 'uxie',
+                      'manifestGitUrl': '',
+                      'imageName': 'unknown'
+                  }
+
+              # Get pipeline reference
+              pipeline_ref = config.get('pipelineRef', 'java-pipeline')
+
+              # Write results
+              with open("$(results.pipelineRef.path)", 'w') as f:
+                  f.write(pipeline_ref)
+
+              with open("$(results.projectName.path)", 'w') as f:
+                  f.write(config.get('projectName', 'uxie'))
+
+              with open("$(results.manifestGitUrl.path)", 'w') as f:
+                  f.write(config.get('manifestGitUrl', ''))
+
+              with open("$(results.imageName.path)", 'w') as f:
+                  f.write(config.get('imageName', config.get('applicationName', 'unknown')))
+
+              print(f"Pipeline: {pipeline_ref}")
+              print(f"Project: {config.get('projectName', 'uxie')}")
+              print(f"Manifest: {config.get('manifestGitUrl', 'N/A')}")
+              print(f"Image: {config.get('imageName', 'unknown')}")
+      params:
+        - name: appConfigPath
+          value: $(params.sourceContextDir)/ocp-config.yaml
+        - name: gitRevision
+          value: $(params.gitRevision)
+      workspaces:
+        - name: data
+          workspace: data
+
+    # Step 3: Start tech-specific pipeline
+    - name: start-pipeline
+      runAfter:
+        - get-pipeline-ref
+      taskSpec:
+        params:
+          - name: applicationName
+            type: string
+          - name: pipelineRef
+            type: string
+          - name: gitRepoUrl
+            type: string
+          - name: gitRevision
+            type: string
+          - name: environment
+            type: string
+          - name: manifestGitUrl
+            type: string
+          - name: imageName
+            type: string
+          - name: enabledLintSonar
+            type: string
+          - name: ignoreLinterFailures
+            type: string
+          - name: ignoreTestFailures
+            type: string
+          - name: ignoreScanFailures
+            type: string
+          - name: ignoreQualityGate
+            type: string
+          - name: nexusURL
+            type: string
+          - name: sonarUrl
+            type: string
+        workspaces:
+          - name: data
+        steps:
+          - name: start
+            image: image-registry.openshift-image-registry.svc:5000/openshift/pipelines-cli-tkn-rhel8:v1.16.2-1
+            script: |
+              #!/bin/bash
+              set -e
+
+              PIPELINE_REF="$(params.pipelineRef)"
+              APP_NAME="$(params.applicationName)"
+
+              echo "Starting pipeline: $PIPELINE_REF"
+              echo "Application: $APP_NAME"
+              echo "Environment: $(params.environment)"
+
+              tkn pipeline start "$PIPELINE_REF" \
+                --param applicationName="$APP_NAME" \
+                --param gitRepoUrl="$(params.gitRepoUrl)" \
+                --param gitRevision="$(params.gitRevision)" \
+                --param environment="$(params.environment)" \
+                --param manifestGitUrl="$(params.manifestGitUrl)" \
+                --param imageName="$(params.imageName)" \
+                --param enabledLintSonar="$(params.enabledLintSonar)" \
+                --param ignoreLinterFailures="$(params.ignoreLinterFailures)" \
+                --param ignoreTestFailures="$(params.ignoreTestFailures)" \
+                --param ignoreScanFailures="$(params.ignoreScanFailures)" \
+                --param ignoreQualityGate="$(params.ignoreQualityGate)" \
+                --param nexusURL="$(params.nexusURL)" \
+                --param sonarUrl="$(params.sonarUrl)" \
+                --workspace name=data,claimName=$(workspaces.data.claim) \
+                --workspace name=ssh-creds,secret=git-ssh-credentials \
+                --workspace name=maven-settings,emptyDir="" \
+                --prefix-name "$APP_NAME-$(params.environment)" \
+                --use-param-defaults
+
+              echo "Pipeline $PIPELINE_REF started successfully"
+      params:
+        - name: applicationName
+          value: $(params.applicationName)
+        - name: pipelineRef
+          value: $(tasks.get-pipeline-ref.results.pipelineRef)
+        - name: gitRepoUrl
+          value: $(params.gitRepoUrl)
+        - name: gitRevision
+          value: $(params.gitRevision)
+        - name: environment
+          value: $(params.environment)
+        - name: manifestGitUrl
+          value: $(tasks.get-pipeline-ref.results.manifestGitUrl)
+        - name: imageName
+          value: $(tasks.get-pipeline-ref.results.imageName)
+        - name: enabledLintSonar
+          value: $(params.enabledLintSonar)
+        - name: ignoreLinterFailures
+          value: $(params.ignoreLinterFailures)
+        - name: ignoreTestFailures
+          value: $(params.ignoreTestFailures)
+        - name: ignoreScanFailures
+          value: $(params.ignoreScanFailures)
+        - name: ignoreQualityGate
+          value: $(params.ignoreQualityGate)
+        - name: nexusURL
+          value: $(params.nexusURL)
+        - name: sonarUrl
+          value: $(params.sonarUrl)
+      workspaces:
+        - name: data
+          workspace: data

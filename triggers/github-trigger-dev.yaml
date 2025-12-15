@@ -1,0 +1,32 @@
+apiVersion: triggers.tekton.dev/v1beta1
+kind: Trigger
+metadata:
+  name: github-trigger-dev
+  namespace: uxie-cicd
+spec:
+  interceptors:
+    - ref:
+        name: github
+        kind: ClusterInterceptor
+      params:
+        - name: secretRef
+          value:
+            secretName: github-webhook-secret
+            secretKey: secret
+        - name: eventTypes
+          value:
+            - push
+    - ref:
+        name: cel
+        kind: ClusterInterceptor
+      params:
+        - name: filter
+          value: 'body.ref == "refs/heads/develop"'
+        - name: overlays
+          value:
+            - key: branch_name
+              expression: '"develop"'
+  bindings:
+    - ref: github-push-binding
+  template:
+    ref: github-triggertemplate-dev

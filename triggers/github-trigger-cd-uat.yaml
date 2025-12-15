@@ -1,0 +1,37 @@
+apiVersion: triggers.tekton.dev/v1beta1
+kind: Trigger
+metadata:
+  name: github-trigger-cd-uat
+  namespace: uxie-cicd
+spec:
+  interceptors:
+    - ref:
+        name: github
+        kind: ClusterInterceptor
+      params:
+        - name: secretRef
+          value:
+            secretName: github-webhook-secret
+            secretKey: secret
+        - name: eventTypes
+          value:
+            - push
+    - ref:
+        name: cel
+        kind: ClusterInterceptor
+      params:
+        # Filter: push to main branch AND modified files in overlays/uat/
+        - name: filter
+          value: |
+            body.ref == "refs/heads/main" &&
+            body.commits.exists(c, c.modified.exists(f, f.startsWith("overlays/uat/")))
+        - name: overlays
+          value:
+            - key: target_environment
+              expression: '"uat"'
+            - key: repo_name
+              expression: 'body.repository.name.replace("-manifests", "")'
+  bindings:
+    - ref: github-push-binding
+  template:
+    ref: github-triggertemplate-cd

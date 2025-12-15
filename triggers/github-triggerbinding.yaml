@@ -1,0 +1,19 @@
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerBinding
+metadata:
+  name: github-push-binding
+  namespace: uxie-cicd
+spec:
+  params:
+    - name: git-url
+      value: $(body.repository.ssh_url)
+    - name: git-revision
+      value: $(body.ref)
+    - name: git-repo-name
+      value: $(body.repository.name)
+    - name: git-commit-sha
+      value: $(body.after)
+    - name: git-commit-author
+      value: $(body.pusher.name)
+    - name: git-commit-message
+      value: $(body.head_commit.message)

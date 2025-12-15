@@ -1,0 +1,61 @@
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerTemplate
+metadata:
+  name: github-triggertemplate-dev
+  namespace: uxie-cicd
+spec:
+  params:
+    - name: git-url
+      description: Git repository URL (SSH)
+    - name: git-revision
+      description: Git revision (refs/heads/develop)
+    - name: git-repo-name
+      description: Repository name
+    - name: git-commit-sha
+      description: Commit SHA
+    - name: git-commit-author
+      description: Commit author
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1
+      kind: PipelineRun
+      metadata:
+        generateName: $(tt.params.git-repo-name)-dev-
+        namespace: uxie-cicd
+        labels:
+          tekton.dev/pipeline: main-pipeline
+          app.kubernetes.io/name: $(tt.params.git-repo-name)
+          app.kubernetes.io/environment: dev
+      spec:
+        pipelineRef:
+          name: main-pipeline
+        params:
+          - name: applicationName
+            value: $(tt.params.git-repo-name)
+          - name: gitRepoUrl
+            value: $(tt.params.git-url)
+          - name: gitRevision
+            value: $(tt.params.git-revision)
+          - name: environment
+            value: dev
+          - name: enabledLintSonar
+            value: "true"
+          - name: ignoreLinterFailures
+            value: "true"
+          - name: ignoreTestFailures
+            value: "true"
+          - name: ignoreScanFailures
+            value: "true"
+          - name: ignoreQualityGate
+            value: "true"
+        workspaces:
+          - name: data
+            volumeClaimTemplate:
+              spec:
+                accessModes:
+                  - ReadWriteOnce
+                resources:
+                  requests:
+                    storage: 2Gi
+          - name: ssh-creds
+            secret:
+              secretName: git-ssh-credentials

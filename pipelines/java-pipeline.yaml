@@ -1,0 +1,268 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: java-pipeline
+  namespace: uxie-cicd
+spec:
+  description: |
+    Java/Quarkus CI pipeline with conditional tasks based on environment.
+    - dev: Build, test, deploy (no tag, no Nexus)
+    - qa: Build, test, generate tag, push to Nexus, update manifest
+  params:
+    - name: applicationName
+      type: string
+    - name: gitRepoUrl
+      type: string
+    - name: gitRevision
+      type: string
+    - name: environment
+      type: string
+    - name: manifestGitUrl
+      type: string
+    - name: imageName
+      type: string
+    - name: enabledLintSonar
+      type: string
+      default: "true"
+    - name: ignoreLinterFailures
+      type: string
+      default: "true"
+    - name: ignoreTestFailures
+      type: string
+      default: "true"
+    - name: ignoreScanFailures
+      type: string
+      default: "true"
+    - name: ignoreQualityGate
+      type: string
+      default: "true"
+    - name: nexusURL
+      type: string
+      default: http://nxrm-ha-nexus-repo-service.nexus.svc.cluster.local:80/repository/maven-public/
+    - name: sonarUrl
+      type: string
+      default: http://sonarqube-sonarqube.sonarqube.svc.cluster.local:9000
+    - name: projectName
+      type: string
+      default: uxie
+    - name: dockerfilePath
+      type: string
+      default: src/main/docker/Dockerfile.jvm
+  workspaces:
+    - name: data
+    - name: ssh-creds
+      optional: true
+    - name: maven-settings
+  tasks:
+    # Step 1: Clone source
+    - name: git-clone
+      taskRef:
+        kind: ClusterTask
+        name: git-clone
+      params:
+        - name: url
+          value: $(params.gitRepoUrl)
+        - name: revision
+          value: $(params.gitRevision)
+        - name: subdirectory
+          value: source
+        - name: deleteExisting
+          value: "true"
+      workspaces:
+        - name: output
+          workspace: data
+        - name: ssh-directory
+          workspace: ssh-creds
+
+    # Step 2: Generate tag (QA only)
+    - name: generate-tag
+      when:
+        - input: $(params.environment)
+          operator: in
+          values: ["qa"]
+      runAfter:
+        - git-clone
+      taskRef:
+        name: generate-tag-custom
+
+    # Step 3: Maven compile
+    - name: maven-compile
+      runAfter:
+        - git-clone
+      taskRef:
+        name: maven-custom
+      params:
+        - name: GOALS
+          value:
+            - clean
+            - compile
+        - name: NEXUS_MIRROR_URL
+          value: $(params.nexusURL)
+        - name: CONTEXT_DIR
+          value: source
+      workspaces:
+        - name: source
+          workspace: data
+        - name: maven-settings
+          workspace: maven-settings
+
+    # Step 4: Maven test
+    - name: maven-test
+      runAfter:
+        - maven-compile
+      taskRef:
+        name: maven-custom
+      params:
+        - name: GOALS
+          value:
+            - test
+        - name: NEXUS_MIRROR_URL
+          value: $(params.nexusURL)
+        - name: CONTEXT_DIR
+          value: source
+      workspaces:
+        - name: source
+          workspace: data
+        - name: maven-settings
+          workspace: maven-settings
+
+    # Step 5: Maven package
+    - name: maven-package
+      runAfter:
+        - maven-test
+      taskRef:
+        name: maven-custom
+      params:
+        - name: GOALS
+          value:
+            - package
+            - -DskipTests
+        - name: NEXUS_MIRROR_URL
+          value: $(params.nexusURL)
+        - name: CONTEXT_DIR
+          value: source
+      workspaces:
+        - name: source
+          workspace: data
+        - name: maven-settings
+          workspace: maven-settings
+
+    # Step 6: SonarQube scan (when enabled)
+    - name: sonarqube-scan
+      when:
+        - input: $(params.enabledLintSonar)
+          operator: in
+          values: ["true"]
+      runAfter:
+        - maven-package
+      taskRef:
+        name: sonarqube-scanner-custom
+      params:
+        - name: SONAR_HOST_URL
+          value: $(params.sonarUrl)
+        - name: SONAR_PROJECT_KEY
+          value: $(params.applicationName)
+        - name: SOURCE_DIR
+          value: source
+        - name: WAIT_FOR_QUALITY_GATE
+          value: "false"
+      workspaces:
+        - name: source
+          workspace: data
+
+    # Step 7: Build image (with appropriate tag)
+    - name: build-image
+      runAfter:
+        - maven-package
+      taskRef:
+        name: buildah-simple
+      params:
+        - name: IMAGE
+          value: image-registry.openshift-image-registry.svc:5000/$(params.projectName)-$(params.environment)/$(params.imageName):latest
+        - name: DOCKERFILE
+          value: ./source/$(params.dockerfilePath)
+        - name: CONTEXT
+          value: ./source
+      workspaces:
+        - name: source
+          workspace: data
+
+    # Step 8: Tag repo (QA only)
+    - name: tag-repo
+      when:
+        - input: $(params.environment)
+          operator: in
+          values: ["qa"]
+      runAfter:
+        - build-image
+      taskRef:
+        name: tag-repo-custom
+      params:
+        - name: gitRepoUrl
+          value: $(params.gitRepoUrl)
+        - name: imageTag
+          value: $(tasks.generate-tag.results.imageTag)
+      workspaces:
+        - name: source
+          workspace: data
+        - name: ssh-directory
+          workspace: ssh-creds
+
+    # Step 9: Copy to Nexus (QA only)
+    - name: push-to-nexus
+      when:
+        - input: $(params.environment)
+          operator: in
+          values: ["qa"]
+      runAfter:
+        - build-image
+      taskRef:
+        name: skopeo-copy
+      params:
+        - name: srcImage
+          value: image-registry.openshift-image-registry.svc:5000/$(params.projectName)-$(params.environment)/$(params.imageName):latest
+        - name: destImage
+          value: nexus-sonatype-nexus-service.nexus.svc.cluster.local:5003/$(params.imageName):$(tasks.generate-tag.results.imageTag)
+
+    # Step 10: Update manifest (always)
+    - name: update-manifest
+      runAfter:
+        - build-image
+      taskRef:
+        name: update-manifest-custom
+      params:
+        - name: manifestGitUrl
+          value: $(params.manifestGitUrl)
+        - name: environment
+          value: $(params.environment)
+        - name: imageName
+          value: $(params.imageName)
+        - name: imageTag
+          value: latest
+        - name: registryUrl
+          value: image-registry.openshift-image-registry.svc:5000
+      workspaces:
+        - name: source
+          workspace: data
+        - name: ssh-directory
+          workspace: ssh-creds
+
+    # Step 11: Notify
+    - name: notify
+      runAfter:
+        - update-manifest
+      taskRef:
+        name: send-to-slack-custom
+      params:
+        - name: channel
+          value: "C06BXCTJW9Z"
+        - name: applicationName
+          value: $(params.applicationName)
+        - name: environment
+          value: $(params.environment)
+        - name: imageTag
+          value: latest
+        - name: status
+          value: success
+        - name: message
+          value: "Build and deploy completed successfully"

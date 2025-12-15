@@ -1,0 +1,112 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: send-to-slack-custom
+  namespace: uxie-cicd
+spec:
+  description: |
+    Send notification to Slack channel.
+  params:
+    - name: webhookUrl
+      description: Slack webhook URL or API endpoint
+      type: string
+      default: "https://slack.com/api/chat.postMessage"
+    - name: webhookToken
+      description: Slack bot token (if using API)
+      type: string
+      default: ""
+    - name: channel
+      description: Slack channel ID
+      type: string
+    - name: message
+      description: Message to send
+      type: string
+    - name: status
+      description: Pipeline status (success/failure)
+      type: string
+      default: "success"
+    - name: applicationName
+      description: Application name for context
+      type: string
+    - name: environment
+      description: Target environment
+      type: string
+    - name: imageTag
+      description: Deployed image tag
+      type: string
+      default: ""
+  steps:
+    - name: send-notification
+      image: registry.access.redhat.com/ubi8/ubi-minimal:latest
+      script: |
+        #!/bin/bash
+
+        # Determine emoji based on status
+        if [ "$(params.status)" == "success" ]; then
+          EMOJI=":white_check_mark:"
+          COLOR="good"
+        else
+          EMOJI=":x:"
+          COLOR="danger"
+        fi
+
+        # Build message
+        MESSAGE="$EMOJI *$(params.applicationName)* deployed to *$(params.environment)*"
+        if [ -n "$(params.imageTag)" ]; then
+          MESSAGE="$MESSAGE\nTag: \`$(params.imageTag)\`"
+        fi
+        MESSAGE="$MESSAGE\n$(params.message)"
+
+        # Create payload
+        PAYLOAD=$(cat << EOF
+        {
+          "channel": "$(params.channel)",
+          "text": "$MESSAGE",
+          "attachments": [
+            {
+              "color": "$COLOR",
+              "fields": [
+                {
+                  "title": "Application",
+                  "value": "$(params.applicationName)",
+                  "short": true
+                },
+                {
+                  "title": "Environment",
+                  "value": "$(params.environment)",
+                  "short": true
+                },
+                {
+                  "title": "Status",
+                  "value": "$(params.status)",
+                  "short": true
+                },
+                {
+                  "title": "Tag",
+                  "value": "$(params.imageTag)",
+                  "short": true
+                }
+              ]
+            }
+          ]
+        }
+        EOF
+        )
+
+        # Send to Slack
+        if [ -n "$(params.webhookToken)" ]; then
+          # Using Slack API with token
+          curl -X POST "$(params.webhookUrl)" \
+            -H "Authorization: Bearer $(params.webhookToken)" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            --silent --show-error
+        else
+          # Using webhook URL directly
+          curl -X POST "$(params.webhookUrl)" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            --silent --show-error
+        fi
+
+        echo "Slack notification sent"

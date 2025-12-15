@@ -1,0 +1,94 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: python-custom
+  namespace: uxie-cicd
+spec:
+  description: |
+    Run Python build tasks: install dependencies, lint, test.
+  params:
+    - name: PYTHON_IMAGE
+      description: Python image to use
+      type: string
+      default: python:3.11-slim
+    - name: CONTEXT_DIR
+      description: Directory containing requirements.txt
+      type: string
+      default: "."
+    - name: RUN_LINT
+      description: Whether to run linting
+      type: string
+      default: "true"
+    - name: RUN_TESTS
+      description: Whether to run tests
+      type: string
+      default: "true"
+  workspaces:
+    - name: source
+      description: Workspace with source code
+  results:
+    - name: coverage
+      description: Test coverage percentage
+  steps:
+    - name: install-deps
+      image: $(params.PYTHON_IMAGE)
+      workingDir: $(workspaces.source.path)/$(params.CONTEXT_DIR)
+      script: |
+        #!/bin/bash
+        set -e
+
+        echo "Installing dependencies..."
+        pip install --upgrade pip
+
+        if [ -f requirements.txt ]; then
+          pip install -r requirements.txt
+        fi
+
+        if [ -f requirements-dev.txt ]; then
+          pip install -r requirements-dev.txt
+        fi
+
+        # Install linting/testing tools
+        pip install pylint pytest pytest-cov black
+
+        echo "Dependencies installed successfully"
+    - name: lint
+      image: $(params.PYTHON_IMAGE)
+      workingDir: $(workspaces.source.path)/$(params.CONTEXT_DIR)
+      script: |
+        #!/bin/bash
+
+        if [ "$(params.RUN_LINT)" != "true" ]; then
+          echo "Linting skipped"
+          exit 0
+        fi
+
+        echo "Running pylint..."
+        pylint --exit-zero --output-format=text src/ app/ 2>/dev/null || true
+
+        echo "Running black check..."
+        black --check --diff . 2>/dev/null || echo "Black formatting check completed"
+    - name: test
+      image: $(params.PYTHON_IMAGE)
+      workingDir: $(workspaces.source.path)/$(params.CONTEXT_DIR)
+      script: |
+        #!/bin/bash
+
+        if [ "$(params.RUN_TESTS)" != "true" ]; then
+          echo "Tests skipped"
+          echo -n "0" > $(results.coverage.path)
+          exit 0
+        fi
+
+        echo "Running pytest..."
+        if [ -d "tests" ]; then
+          pytest tests/ --cov=. --cov-report=term --cov-report=xml:coverage.xml || true
+
+          # Extract coverage percentage
+          COVERAGE=$(grep -oP 'TOTAL.*\s+\K\d+(?=%)' coverage.xml 2>/dev/null || echo "0")
+          echo -n "$COVERAGE" > $(results.coverage.path)
+          echo "Coverage: $COVERAGE%"
+        else
+          echo "No tests directory found"
+          echo -n "0" > $(results.coverage.path)
+        fi

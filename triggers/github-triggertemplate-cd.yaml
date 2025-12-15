@@ -1,0 +1,55 @@
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerTemplate
+metadata:
+  name: github-triggertemplate-cd
+  namespace: uxie-cicd
+spec:
+  params:
+    - name: git-url
+      description: Manifest repository URL (SSH)
+    - name: git-revision
+      description: Git revision
+    - name: git-repo-name
+      description: Manifest repository name (e.g., uxie-chat-api-manifests)
+    - name: git-commit-sha
+      description: Commit SHA
+    - name: git-commit-author
+      description: Commit author
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1
+      kind: PipelineRun
+      metadata:
+        generateName: $(tt.params.git-repo-name)-cd-
+        namespace: uxie-cicd
+        labels:
+          tekton.dev/pipeline: cd-pipeline
+          app.kubernetes.io/name: $(tt.params.git-repo-name)
+      spec:
+        pipelineRef:
+          name: cd-pipeline
+        params:
+          - name: manifestGitUrl
+            value: $(tt.params.git-url)
+          - name: manifestRepoName
+            value: $(tt.params.git-repo-name)
+          # Application name derived from manifest repo (remove -manifests suffix)
+          - name: applicationName
+            value: $(tt.params.git-repo-name)
+          # Target environment extracted by CEL interceptor
+          - name: targetEnvironment
+            value: $(extensions.target_environment)
+          # Source environment is always QA for UAT/PROD promotions
+          - name: sourceEnvironment
+            value: qa
+        workspaces:
+          - name: data
+            volumeClaimTemplate:
+              spec:
+                accessModes:
+                  - ReadWriteOnce
+                resources:
+                  requests:
+                    storage: 1Gi
+          - name: ssh-creds
+            secret:
+              secretName: git-ssh-credentials

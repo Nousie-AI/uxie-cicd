@@ -1,0 +1,24 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: generate-tag-custom
+  namespace: uxie-cicd
+spec:
+  description: |
+    Generate a semantic version tag in format YYYY-MM-DD-HH-MM-SS.
+    Only runs for QA environment (main branch).
+  results:
+    - name: imageTag
+      description: Generated tag for the image
+  steps:
+    - name: generate-tag
+      image: registry.access.redhat.com/ubi8/ubi-minimal:latest
+      script: |
+        #!/bin/bash
+        set -e
+
+        # Generate timestamp-based tag
+        TAG=$(date +%Y-%m-%d-%H-%M-%S)
+
+        echo "Generated tag: $TAG"
+        echo -n "$TAG" > $(results.imageTag.path)

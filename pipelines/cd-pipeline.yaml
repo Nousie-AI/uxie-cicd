@@ -1,0 +1,134 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: cd-pipeline
+  namespace: uxie-cicd
+spec:
+  description: |
+    CD Pipeline for UAT/PROD promotion.
+    Copies image from QA namespace (NO REBUILD).
+    Triggered by manifest repository changes.
+  params:
+    - name: manifestGitUrl
+      description: Manifest repository URL (SSH)
+      type: string
+    - name: manifestRepoName
+      description: Manifest repository name
+      type: string
+    - name: applicationName
+      description: Application name (derived from manifest repo)
+      type: string
+    - name: targetEnvironment
+      description: Target environment (uat/prod)
+      type: string
+    - name: sourceEnvironment
+      description: Source environment (qa)
+      type: string
+      default: qa
+    - name: projectName
+      description: Project name for namespace
+      type: string
+      default: uxie
+  workspaces:
+    - name: data
+    - name: ssh-creds
+      optional: true
+  tasks:
+    # Step 1: Clone manifest repository
+    - name: git-clone-manifest
+      taskRef:
+        kind: ClusterTask
+        name: git-clone
+      params:
+        - name: url
+          value: $(params.manifestGitUrl)
+        - name: revision
+          value: main
+        - name: subdirectory
+          value: manifest
+        - name: deleteExisting
+          value: "true"
+      workspaces:
+        - name: output
+          workspace: data
+        - name: ssh-directory
+          workspace: ssh-creds
+
+    # Step 2: Extract image name from manifest repo name
+    - name: get-app-info
+      runAfter:
+        - git-clone-manifest
+      taskSpec:
+        params:
+          - name: manifestRepoName
+            type: string
+        results:
+          - name: imageName
+            description: Image name
+        steps:
+          - name: extract
+            image: registry.access.redhat.com/ubi8/ubi-minimal:latest
+            script: |
+              #!/bin/bash
+              # Remove -manifests suffix
+              IMAGE_NAME=$(echo "$(params.manifestRepoName)" | sed 's/-manifests$//')
+              echo "Image name: $IMAGE_NAME"
+              echo -n "$IMAGE_NAME" > $(results.imageName.path)
+      params:
+        - name: manifestRepoName
+          value: $(params.manifestRepoName)
+
+    # Step 3: Get image tag from source environment (QA)
+    - name: get-image-tag
+      runAfter:
+        - get-app-info
+      taskRef:
+        name: get-image-tag-custom
+      params:
+        - name: manifestGitUrl
+          value: $(params.manifestGitUrl)
+        - name: sourceEnvironment
+          value: $(params.sourceEnvironment)
+        - name: imageName
+          value: $(tasks.get-app-info.results.imageName)
+      workspaces:
+        - name: source
+          workspace: data
+        - name: ssh-directory
+          workspace: ssh-creds
+
+    # Step 4: Promote image (NO REBUILD - just oc tag)
+    - name: promote-image
+      runAfter:
+        - get-image-tag
+      taskRef:
+        name: oc-tag-custom
+      params:
+        - name: srcNamespace
+          value: $(params.projectName)-$(params.sourceEnvironment)
+        - name: destNamespace
+          value: $(params.projectName)-$(params.targetEnvironment)
+        - name: imageName
+          value: $(tasks.get-app-info.results.imageName)
+        - name: imageTag
+          value: $(tasks.get-image-tag.results.imageTag)
+
+    # Step 5: Notify (optional)
+    - name: notify
+      runAfter:
+        - promote-image
+      taskRef:
+        name: send-to-slack-custom
+      params:
+        - name: channel
+          value: "C06BXCTJW9Z"
+        - name: applicationName
+          value: $(tasks.get-app-info.results.imageName)
+        - name: environment
+          value: $(params.targetEnvironment)
+        - name: imageTag
+          value: $(tasks.get-image-tag.results.imageTag)
+        - name: status
+          value: success
+        - name: message
+          value: "Image promoted from $(params.sourceEnvironment) to $(params.targetEnvironment). Manual ArgoCD sync required."

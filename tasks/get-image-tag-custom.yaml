@@ -1,0 +1,77 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: get-image-tag-custom
+  namespace: uxie-cicd
+spec:
+  description: |
+    Extract image tag from manifest repository.
+    Used in CD pipeline to get QA tag for UAT/PROD promotion.
+  params:
+    - name: manifestGitUrl
+      description: Manifest repository URL (SSH)
+      type: string
+    - name: sourceEnvironment
+      description: Environment to get tag from (usually qa)
+      type: string
+      default: qa
+    - name: imageName
+      description: Image name to look for
+      type: string
+  workspaces:
+    - name: source
+      description: Workspace for manifest repo clone
+    - name: ssh-directory
+      description: SSH credentials for git clone
+      optional: true
+  results:
+    - name: imageTag
+      description: Extracted image tag
+  steps:
+    - name: get-tag
+      image: registry.redhat.io/openshift-pipelines/pipelines-git-init-rhel8:latest
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/bin/bash
+        set -e
+
+        # Configure SSH if credentials provided
+        if [ -d "$(workspaces.ssh-directory.path)" ]; then
+          cp -R $(workspaces.ssh-directory.path)/* ~/.ssh/
+          chmod 700 ~/.ssh
+          chmod 600 ~/.ssh/*
+        fi
+
+        # Clone manifest repo
+        MANIFEST_DIR="manifest-repo"
+        git clone $(params.manifestGitUrl) $MANIFEST_DIR
+        cd $MANIFEST_DIR
+
+        # Find tag in kustomization.yaml
+        KUSTOMIZATION_FILE="overlays/$(params.sourceEnvironment)/kustomization.yaml"
+
+        if [ ! -f "$KUSTOMIZATION_FILE" ]; then
+          echo "ERROR: $KUSTOMIZATION_FILE not found"
+          exit 1
+        fi
+
+        echo "Reading tag from: $KUSTOMIZATION_FILE"
+
+        # Extract newTag value
+        TAG=$(grep -A5 "name: $(params.imageName)" "$KUSTOMIZATION_FILE" | grep "newTag:" | head -1 | awk '{print $2}')
+
+        if [ -z "$TAG" ]; then
+          # Try alternative format (deployment-patches.yaml)
+          PATCH_FILE="overlays/$(params.sourceEnvironment)/deployment-patches.yaml"
+          if [ -f "$PATCH_FILE" ]; then
+            TAG=$(grep "image:.*$(params.imageName)" "$PATCH_FILE" | head -1 | sed 's/.*://' | tr -d ' ')
+          fi
+        fi
+
+        if [ -z "$TAG" ]; then
+          echo "ERROR: Could not extract tag for $(params.imageName)"
+          exit 1
+        fi
+
+        echo "Found tag: $TAG"
+        echo -n "$TAG" > $(results.imageTag.path)

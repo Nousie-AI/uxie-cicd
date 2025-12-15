@@ -1,0 +1,48 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: uxie-qa
+  namespace: openshift-gitops
+spec:
+  generators:
+    - list:
+        elements:
+          - name: chat-api
+            repoURL: git@github.com:Nousie-AI/uxie-chat-api-manifests.git
+          - name: admin-api
+            repoURL: git@github.com:Nousie-AI/uxie-admin-api-manifests.git
+          - name: documents-api
+            repoURL: git@github.com:Nousie-AI/uxie-documents-api-manifests.git
+          - name: rag-api
+            repoURL: git@github.com:Nousie-AI/uxie-rag-api-manifests.git
+          - name: enterprise-rag-api
+            repoURL: git@github.com:Nousie-AI/uxie-enterprise-rag-api-manifests.git
+          - name: intent-api
+            repoURL: git@github.com:Nousie-AI/uxie-intent-api-manifests.git
+          - name: chat-web
+            repoURL: git@github.com:Nousie-AI/uxie-chat-web-manifests.git
+          - name: documents-web
+            repoURL: git@github.com:Nousie-AI/uxie-documents-web-manifests.git
+  template:
+    metadata:
+      name: 'uxie-qa-{{name}}'
+      namespace: openshift-gitops
+      labels:
+        app.kubernetes.io/name: '{{name}}'
+        app.kubernetes.io/environment: qa
+    spec:
+      project: uxie
+      source:
+        repoURL: '{{repoURL}}'
+        targetRevision: main
+        path: overlays/qa
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: uxie-qa
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - PruneLast=true

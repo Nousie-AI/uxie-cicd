@@ -1,0 +1,46 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: oc-tag-custom
+  namespace: uxie-cicd
+spec:
+  description: |
+    Promote image between namespaces using oc tag (no rebuild).
+    Used for UAT/PROD deployment from QA images.
+  params:
+    - name: srcNamespace
+      description: Source namespace (e.g., uxie-qa)
+      type: string
+    - name: destNamespace
+      description: Destination namespace (e.g., uxie-uat)
+      type: string
+    - name: imageName
+      description: Image name (e.g., chat-api)
+      type: string
+    - name: imageTag
+      description: Image tag to promote
+      type: string
+  steps:
+    - name: tag-image
+      image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+      script: |
+        #!/bin/bash
+        set -e
+
+        SRC="$(params.srcNamespace)/$(params.imageName):$(params.imageTag)"
+        DEST="$(params.destNamespace)/$(params.imageName):$(params.imageTag)"
+        DEST_LATEST="$(params.destNamespace)/$(params.imageName):latest"
+
+        echo "Promoting image:"
+        echo "  From: $SRC"
+        echo "  To:   $DEST"
+
+        # Tag with version
+        oc tag "$SRC" "$DEST"
+
+        # Also tag as latest
+        oc tag "$SRC" "$DEST_LATEST"
+
+        echo "Image promoted successfully (NO REBUILD)"
+        echo "  - $DEST"
+        echo "  - $DEST_LATEST"
