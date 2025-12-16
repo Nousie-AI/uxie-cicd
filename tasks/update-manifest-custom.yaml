@@ -38,20 +38,48 @@ spec:
         #!/bin/sh
         set -e
 
+        SSH_DIR="$(workspaces.ssh-directory.path)"
+
         # Configure SSH if credentials provided
-        if [ -d "$(workspaces.ssh-directory.path)" ]; then
+        if [ -d "$SSH_DIR" ] && [ "$(ls -A $SSH_DIR 2>/dev/null)" ]; then
+          echo "Configuring SSH credentials..."
           mkdir -p /root/.ssh
-          cp $(workspaces.ssh-directory.path)/ssh-privatekey /root/.ssh/id_rsa
-          cp $(workspaces.ssh-directory.path)/known_hosts /root/.ssh/known_hosts
+
+          # Copy known_hosts if exists
+          if [ -f "$SSH_DIR/known_hosts" ]; then
+            cp "$SSH_DIR/known_hosts" /root/.ssh/known_hosts
+            chmod 644 /root/.ssh/known_hosts
+          fi
+
+          # Copy private key (handle both 'ssh-privatekey' and 'id_rsa' names)
+          if [ -f "$SSH_DIR/ssh-privatekey" ]; then
+            cp "$SSH_DIR/ssh-privatekey" /root/.ssh/id_rsa
+            chmod 600 /root/.ssh/id_rsa
+          elif [ -f "$SSH_DIR/id_rsa" ]; then
+            cp "$SSH_DIR/id_rsa" /root/.ssh/id_rsa
+            chmod 600 /root/.ssh/id_rsa
+          fi
+
           chmod 700 /root/.ssh
-          chmod 600 /root/.ssh/id_rsa
-          chmod 644 /root/.ssh/known_hosts
+
+          # Disable strict host key checking for GitHub
+          echo "Host github.com" >> /root/.ssh/config
+          echo "  StrictHostKeyChecking no" >> /root/.ssh/config
+          echo "  UserKnownHostsFile /dev/null" >> /root/.ssh/config
+          chmod 600 /root/.ssh/config
+
+          echo "SSH configured successfully"
+        else
+          echo "Warning: No SSH credentials found"
         fi
 
         # Clone manifest repo
         MANIFEST_DIR="manifest-repo"
-        git clone $(params.manifestGitUrl) $MANIFEST_DIR
+        GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone $(params.manifestGitUrl) $MANIFEST_DIR
         cd $MANIFEST_DIR
+
+        # Mark directory as safe (required when running as different user than owner)
+        git config --global --add safe.directory "$(pwd)"
 
         # Configure git
         git config user.email "cicd@nousie-ai.com"
@@ -94,19 +122,25 @@ spec:
           sed -i "s|image:.*$(params.imageName).*|image: $IMAGE_REF:$(params.imageTag)|" "$PATCH_FILE"
         fi
 
-        # Commit and push
+        # Commit and push (only if there are changes)
         git add -A
-        git commit -m "Deploy $(params.imageName):$(params.imageTag) to $(params.environment)
+        if git diff --cached --quiet; then
+          echo "No changes to commit - manifest already up to date"
+          echo "Skipping push - nothing changed"
+        else
+          git commit -m "Deploy $(params.imageName):$(params.imageTag) to $(params.environment)
 
         Automated deployment by UXIE CI/CD Pipeline
         Environment: $(params.environment)
         Image: $IMAGE_REF:$(params.imageTag)
         "
 
-        # Push to the current branch (default branch after clone)
-        CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-        echo "Pushing to branch: $CURRENT_BRANCH"
-        git push origin $CURRENT_BRANCH
+          # Push to the current branch (default branch after clone)
+          CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+          echo "Pushing to branch: $CURRENT_BRANCH"
+          GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git push origin $CURRENT_BRANCH
 
-        echo "Manifest updated successfully"
+          echo "Manifest updated successfully"
+        fi
+
         echo "ArgoCD will sync automatically for $(params.environment)"

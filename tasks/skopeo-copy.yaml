@@ -28,29 +28,13 @@ spec:
       optional: true
   steps:
     - name: copy
-      image: registry.redhat.io/rhel8/skopeo:latest
+      image: quay.io/skopeo/stable:latest
       script: |
-        #!/bin/bash
+        #!/bin/sh
         set -e
 
-        # Source auth (OpenShift SA token)
-        mkdir -p ~/.docker
-        SRC_REGISTRY=$(echo "$(params.srcImage)" | cut -d'/' -f1)
-
-        echo "Configuring source registry auth: $SRC_REGISTRY"
+        # Get service account token for source auth
         SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
-        echo "{\"auths\":{\"$SRC_REGISTRY\":{\"auth\":\"$(echo -n "serviceaccount:$SA_TOKEN" | base64 -w0)\"}}}" > ~/.docker/config-src.json
-
-        # Destination auth (Nexus)
-        DEST_REGISTRY=$(echo "$(params.destImage)" | cut -d'/' -f1)
-        echo "Configuring destination registry auth: $DEST_REGISTRY"
-
-        if [ -f "$(workspaces.nexus-credentials.path)/config.json" ]; then
-          cp $(workspaces.nexus-credentials.path)/config.json ~/.docker/config-dest.json
-        else
-          # Default Nexus credentials (dev)
-          echo "{\"auths\":{\"$DEST_REGISTRY\":{\"auth\":\"$(echo -n "admin:nexusabc" | base64 -w0)\"}}}" > ~/.docker/config-dest.json
-        fi
 
         echo "Copying image:"
         echo "  From: $(params.srcImage)"
@@ -59,8 +43,8 @@ spec:
         skopeo copy \
           --src-tls-verify=$(params.srcTlsVerify) \
           --dest-tls-verify=$(params.destTlsVerify) \
-          --src-authfile=~/.docker/config-src.json \
-          --dest-authfile=~/.docker/config-dest.json \
+          --src-creds="serviceaccount:${SA_TOKEN}" \
+          --dest-creds="admin:nexusabc" \
           docker://$(params.srcImage) \
           docker://$(params.destImage)
 
