@@ -8,7 +8,7 @@
 
 **Triggers**: NOT deployed (webhooks not configured)
 **Promotion**: Manual via `oc` commands
-**Nexus Registry**: Docker connector requires configuration (see Known Issues)
+**Nexus Registry**: ✅ Working (docker-hosted on port 5000)
 
 ## Architecture Overview
 
@@ -387,45 +387,38 @@ nousie-uxie-cicd/
 
 ## Known Issues
 
-### Nexus Docker Registry Connector (Port 5000)
+### Nexus Docker Registry Setup
 
-**Status**: NOT WORKING - Requires Nexus HA Operator configuration
+**Status**: ✅ WORKING
 
-**Problem**: The Nexus HA Operator manages the Nexus deployment. The Docker HTTP connector
-on port 5000 is not bound because:
-1. The `docker-hosted` repository has `httpPort: 5000` configured
-2. But the Jetty HTTP connector itself is not created by the operator
+**Configuration Applied**:
+1. Created `docker-hosted` repository via Nexus API with `httpPort: 5000`
+2. Created `docker-hub` proxy repository for caching
 
-**Workaround** (Current): Use `oc tag` for internal OpenShift image promotion. This works
-for DEV → QA → PROD within the same cluster.
-
-**To Fix** (When needed for cross-cluster sharing):
-
-1. Edit the NexusRepo CR to configure dockerIngress:
+**Verify**:
 ```bash
-oc edit nexusrepos.sonatype.com nexus-uxie -n nexus
+# Check catalog
+oc exec -n nexus nxrm-ha-84-0-0-nexusrepo-statefulset-0 -- \
+  curl -s -u admin:nexusabc http://localhost:5000/v2/_catalog
+
+# Check specific image tags
+oc exec -n nexus nxrm-ha-84-0-0-nexusrepo-statefulset-0 -- \
+  curl -s -u admin:nexusabc http://localhost:5000/v2/chat-api/tags/list
 ```
 
-2. Add dockerIngress configuration in spec:
-```yaml
-spec:
-  ingress:
-    dockerIngress:
-      enabled: true
-      host: docker-registry-nexus.apps-crc.testing
-```
-
-3. Delete StatefulSet to apply changes:
+**If Docker repos disappear after restart**:
 ```bash
-oc delete statefulset nxrm-ha-84-0-0-nexusrepo-statefulset -n nexus
+# Recreate docker-hosted
+curl -X POST -u admin:nexusabc \
+  -H "Content-Type: application/json" \
+  "http://nxrm-ha-nexus-repo-service-nexus.apps-crc.testing/service/rest/v1/repositories/docker/hosted" \
+  -d '{
+    "name": "docker-hosted",
+    "online": true,
+    "storage": {"blobStoreName": "default", "strictContentTypeValidation": true, "writePolicy": "ALLOW"},
+    "docker": {"v1Enabled": false, "forceBasicAuth": true, "httpPort": 5000}
+  }'
 ```
-
-4. Verify port 5000 is listening:
-```bash
-oc exec -n nexus nxrm-ha-84-0-0-nexusrepo-statefulset-0 -- curl localhost:5000/v2/
-```
-
-**Reference**: /home/darkdragonel/workspaceReferenciaCICD/entrega/entrega/bitbucket/devops/cicd/
 
 ### Maven Test Failures Block Pipeline
 
