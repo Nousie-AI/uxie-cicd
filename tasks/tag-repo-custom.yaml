@@ -22,14 +22,15 @@ spec:
       optional: true
   steps:
     - name: tag-repo
-      image: registry.redhat.io/openshift-pipelines/pipelines-git-init-rhel8:latest
+      image: alpine/git:latest
       workingDir: $(workspaces.source.path)
       script: |
-        #!/bin/bash
+        #!/bin/sh
         set -e
 
         # Configure SSH if credentials provided
         if [ -d "$(workspaces.ssh-directory.path)" ]; then
+          mkdir -p ~/.ssh
           cp -R $(workspaces.ssh-directory.path)/* ~/.ssh/
           chmod 700 ~/.ssh
           chmod 600 ~/.ssh/*
