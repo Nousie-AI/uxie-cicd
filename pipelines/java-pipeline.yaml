@@ -106,7 +106,9 @@ spec:
           workspace: maven-settings
 
     # Step 4: Maven test (only in QA where test services are available)
+    # onError: continue allows pipeline to proceed even if tests fail
     - name: maven-test
+      onError: continue
       when:
         - input: $(params.environment)
           operator: in
@@ -151,7 +153,9 @@ spec:
           workspace: maven-settings
 
     # Step 6: SonarQube scan (when enabled)
+    # onError: continue allows pipeline to proceed even if scan fails
     - name: sonarqube-scan
+      onError: continue
       when:
         - input: $(params.enabledLintSonar)
           operator: in

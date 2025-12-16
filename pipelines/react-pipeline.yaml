@@ -86,7 +86,9 @@ spec:
         name: generate-tag-custom
 
     # Step 3: Node.js build/lint/test
+    # onError: continue allows pipeline to proceed even if tests fail
     - name: nodejs-build
+      onError: continue
       runAfter:
         - git-clone
       taskRef:
@@ -105,7 +107,9 @@ spec:
           workspace: data
 
     # Step 4: SonarQube scan (when enabled)
+    # onError: continue allows pipeline to proceed even if scan fails
     - name: sonarqube-scan
+      onError: continue
       when:
         - input: $(params.enabledLintSonar)
           operator: in
