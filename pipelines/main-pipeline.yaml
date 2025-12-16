@@ -149,7 +149,7 @@ spec:
         - name: data
           workspace: data
 
-    # Step 3: Start tech-specific pipeline
+    # Step 3: Start tech-specific pipeline using oc create
     - name: start-pipeline
       runAfter:
         - get-pipeline-ref
@@ -169,6 +169,8 @@ spec:
             type: string
           - name: imageName
             type: string
+          - name: projectName
+            type: string
           - name: enabledLintSonar
             type: string
           - name: ignoreLinterFailures
@@ -183,43 +185,85 @@ spec:
             type: string
           - name: sonarUrl
             type: string
-        workspaces:
-          - name: data
         steps:
           - name: start
-            image: image-registry.openshift-image-registry.svc:5000/openshift/pipelines-cli-tkn-rhel8:v1.16.2-1
+            image: registry.redhat.io/openshift4/ose-cli:latest
             script: |
-              #!/bin/bash
+              #!/bin/sh
               set -e
 
               PIPELINE_REF="$(params.pipelineRef)"
               APP_NAME="$(params.applicationName)"
+              ENV="$(params.environment)"
+              TIMESTAMP=$(date +%s | cut -c6-10)
 
-              echo "Starting pipeline: $PIPELINE_REF"
+              echo "=== Main Pipeline Orchestrator ==="
+              echo "Pipeline: $PIPELINE_REF"
               echo "Application: $APP_NAME"
-              echo "Environment: $(params.environment)"
+              echo "Environment: $ENV"
+              echo "Manifest URL: $(params.manifestGitUrl)"
+              echo "Image Name: $(params.imageName)"
+              echo ""
 
-              tkn pipeline start "$PIPELINE_REF" \
-                --param applicationName="$APP_NAME" \
-                --param gitRepoUrl="$(params.gitRepoUrl)" \
-                --param gitRevision="$(params.gitRevision)" \
-                --param environment="$(params.environment)" \
-                --param manifestGitUrl="$(params.manifestGitUrl)" \
-                --param imageName="$(params.imageName)" \
-                --param enabledLintSonar="$(params.enabledLintSonar)" \
-                --param ignoreLinterFailures="$(params.ignoreLinterFailures)" \
-                --param ignoreTestFailures="$(params.ignoreTestFailures)" \
-                --param ignoreScanFailures="$(params.ignoreScanFailures)" \
-                --param ignoreQualityGate="$(params.ignoreQualityGate)" \
-                --param nexusURL="$(params.nexusURL)" \
-                --param sonarUrl="$(params.sonarUrl)" \
-                --workspace name=data,claimName=$(workspaces.data.claim) \
-                --workspace name=ssh-creds,secret=git-ssh-credentials \
-                --workspace name=maven-settings,emptyDir="" \
-                --prefix-name "$APP_NAME-$(params.environment)" \
-                --use-param-defaults
+              # Generate PipelineRun YAML
+              cat << EOF | oc create -f -
+              apiVersion: tekton.dev/v1
+              kind: PipelineRun
+              metadata:
+                generateName: ${APP_NAME}-${ENV}-child-
+                namespace: uxie-cicd
+                labels:
+                  tekton.dev/pipeline: ${PIPELINE_REF}
+                  app.kubernetes.io/name: ${APP_NAME}
+                  app.kubernetes.io/environment: ${ENV}
+                  spawned-by: main-pipeline
+              spec:
+                pipelineRef:
+                  name: ${PIPELINE_REF}
+                params:
+                  - name: applicationName
+                    value: "${APP_NAME}"
+                  - name: gitRepoUrl
+                    value: "$(params.gitRepoUrl)"
+                  - name: gitRevision
+                    value: "$(params.gitRevision)"
+                  - name: environment
+                    value: "${ENV}"
+                  - name: manifestGitUrl
+                    value: "$(params.manifestGitUrl)"
+                  - name: imageName
+                    value: "$(params.imageName)"
+                  - name: projectName
+                    value: "$(params.projectName)"
+                  - name: enabledLintSonar
+                    value: "$(params.enabledLintSonar)"
+                  - name: ignoreLinterFailures
+                    value: "$(params.ignoreLinterFailures)"
+                  - name: ignoreTestFailures
+                    value: "$(params.ignoreTestFailures)"
+                  - name: ignoreScanFailures
+                    value: "$(params.ignoreScanFailures)"
+                  - name: ignoreQualityGate
+                    value: "$(params.ignoreQualityGate)"
+                workspaces:
+                  - name: data
+                    volumeClaimTemplate:
+                      spec:
+                        accessModes:
+                          - ReadWriteOnce
+                        resources:
+                          requests:
+                            storage: 2Gi
+                  - name: ssh-creds
+                    secret:
+                      secretName: git-ssh-credentials
+                  - name: maven-settings
+                    emptyDir: {}
+              EOF
 
-              echo "Pipeline $PIPELINE_REF started successfully"
+              echo ""
+              echo "Child pipeline $PIPELINE_REF started successfully"
+              echo "Check status: oc get pipelinerun -l spawned-by=main-pipeline -n uxie-cicd"
       params:
         - name: applicationName
           value: $(params.applicationName)
@@ -235,6 +279,8 @@ spec:
           value: $(tasks.get-pipeline-ref.results.manifestGitUrl)
         - name: imageName
           value: $(tasks.get-pipeline-ref.results.imageName)
+        - name: projectName
+          value: $(tasks.get-pipeline-ref.results.projectName)
         - name: enabledLintSonar
           value: $(params.enabledLintSonar)
         - name: ignoreLinterFailures
@@ -249,6 +295,3 @@ spec:
           value: $(params.nexusURL)
         - name: sonarUrl
           value: $(params.sonarUrl)
-      workspaces:
-        - name: data
-          workspace: data

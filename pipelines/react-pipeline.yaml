@@ -179,7 +179,7 @@ spec:
         - name: srcImage
           value: image-registry.openshift-image-registry.svc:5000/$(params.projectName)-$(params.environment)/$(params.imageName):latest
         - name: destImage
-          value: nexus-sonatype-nexus-service.nexus.svc.cluster.local:5003/$(params.imageName):$(tasks.generate-tag.results.imageTag)
+          value: nxrm-ha-nexus-repo-docker-service.nexus.svc.cluster.local:5000/$(params.imageName):$(tasks.generate-tag.results.imageTag)
 
     # Step 8: Update manifest
     - name: update-manifest
